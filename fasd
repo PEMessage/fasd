@@ -40,6 +40,12 @@ get_vcs() {
     echo "$begin_path"
 }
 
+ntharg() {
+    shift $1
+    printf '%s\n' "$1"
+}
+
+
 fasd() {
 
   # make zsh do word splitting inside this function
@@ -72,9 +78,16 @@ fasd() {
           [ -z "$_FASD_GREP" ] && _FASD_GREP=grep
           if [ -z "$_FASD_DATA" ]; then
             if [ -n "$XDG_CACHE_HOME" ]; then
-              _FASD_DATA="$XDG_CACHE_HOME/fasd"
+              _FASD_DATA="$XDG_CACHE_HOME/fasd/data.txt"
             else
-              _FASD_DATA="$HOME/.cache/fasd"
+              _FASD_DATA="$HOME/.cache/fasd/data.txt"
+            fi
+          fi
+          if [ -z "$_FASD_PROJECT" ]; then
+            if [ -n "$XDG_CACHE_HOME" ]; then
+              _FASD_PROJECT="$XDG_CACHE_HOME/fasd/project.txt"
+            else
+              _FASD_PROJECT="$HOME/.cache/fasd/project.txt"
             fi
           fi
           [ -z "$_FASD_BLACKLIST" ] && _FASD_BLACKLIST="--help"
@@ -351,11 +364,15 @@ EOS
     case " $_FASD_IGNORE " in
       *\ $1\ *) return;;
     esac
-
-    shift; fasd --add "$@" # add all arguments except command
+    shift
+    # echo fasd --add "$@" debug >> /home/zhuojw/.config/pem/shell/z-sh/2.txt # add all arguments except command
+    fasd --add "$@" # add all arguments except command
     ;;
 
-  --add|-A) shift # add entries
+  --add|-A|--mark)
+    local addtype="$1" 
+    local lastarg=`ntharg $# "$@"`
+    shift # add entries
     # stop if we don't own $_FASD_DATA or $_FASD_RO is set
     [ -f "$_FASD_DATA" -a ! -O "$_FASD_DATA" ] || [ "$_FASD_RO" ] && return
 
@@ -377,10 +394,21 @@ EOS
 
     [ -z "${paths##\|}" ] && return # stop if we have nothing to add
 
+
+    # Mark Edit
+    if [ "$addtype" = "--mark" ] && [ "$lastarg" = "EMPTY" ] ; then
+        local markname=""
+    elif [ "$addtype" = "--mark" ] ; then
+        local markname="$lastarg"
+    else
+        local markname="NULL"
+    fi
+
+
     # maintain the file
     local tempfile
     tempfile="$(mktemp "$_FASD_DATA".XXXXXX)" || return
-    $_FASD_AWK -v list="$paths" -v now="$(date +%s)" -v max="$_FASD_MAX" -F"|" '
+    $_FASD_AWK -v list="$paths" -v now="$(date +%s)" -v max="$_FASD_MAX" -v markname="$markname" -F"|" '
       BEGIN {
         split(list, files, "|")
         for(i in files) {
@@ -389,23 +417,30 @@ EOS
           paths[path] = path # array for checking
           rank[path] = 1
           time[path] = now
+          if(markname!="NULL") {
+              marklist[path] = markname
+          }
         }
       }
       $2 >= 1 {
         if($1 in paths) {
           rank[$1] = $2 + 1 / $2
           time[$1] = now
+          if(markname=="NULL") {
+              marklist[$1] = $4
+          }
         } else {
           rank[$1] = $2
           time[$1] = $3
+          marklist[$1] = $4
         }
         count += $2
       }
       END {
         if(count > max)
-          for(i in rank) print i "|" 0.9*rank[i] "|" time[i] # aging
+          for(i in rank) print i "|" 0.9*rank[i] "|" time[i] "|" marklist[i] # aging
         else
-          for(i in rank) print i "|" rank[i] "|" time[i]
+          for(i in rank) print i "|" rank[i] "|" time[i] "|" marklist[i]
       }' "$_FASD_DATA" 2>> "$_FASD_SINK" >| "$tempfile"
     if [ $? -ne 0 -a -f "$_FASD_DATA" ]; then
       env rm -f "$tempfile"
@@ -451,24 +486,33 @@ $(fasd --backend $each)"
     done
     [ "$_fasd_data" ] || _fasd_data="$(cat "$_FASD_DATA")"
 
+    
+
     # set mode specific code for calculating the prior
     case $mode in
       rank) local prior='times[i]';;
       recent) local prior='sqrt(100000/(1+t-la[i]))';;
-      *) local prior='times[i] * frecent(la[i])';;
+      default_v1) local prior='times[i] * frecent(la[i])';;
+      *) local prior='default_v2(i,times[i] * frecent(la[i]))';;
+      # *) local prior='times[i] * frecent(la[i])';;
     esac
 
     if [ "$fnd" ]; then # default matching
-      local bre="$(printf %s\\n "$fnd" | sed 's/\([*\.\\\[]\)/\\\1/g
+      local bre_org="$(printf %s\\n "$fnd" | sed 's/\([*\.\\\[]\)/\\\1/g
         s@ @[^|]*@g;s/\$$/|/')"
-      bre='^[^|]*'"$bre"'[^|/]*|'
-      local _ret="$(printf %s\\n "$_fasd_data" | $_FASD_GREP "$bre")"
+      local bre='^[^|]*'"$bre_org"'[^|/]*|'
+      local bre_last='|[^|]*'"$bre_org"'[^|/]*$'
+      local bre_exact='|'"$bre_org"'$'
+      local _ret="$(printf %s\\n "$_fasd_data" | $_FASD_GREP "\($bre\|$bre_last\)")"
+      local _ret_exact="$(printf %s\\n "$_ret" | $_FASD_GREP "$bre_exact")"
       # force no case matching for default matching
       [ "$_FASD_NOCASE" = 1 ] && _ret="$(printf %s\\n "$_fasd_data" | grep -i "$bre")"
       [ "$_ret" ] && _ret="$(printf %s\\n "$_ret" | while read -r line; do
         [ -${typ:-e} "${line%%\|*}" ] && printf %s\\n "$line"
       done)"
-      if [ "$_ret" ]; then
+      if [ "$_ret_exact" ]; then
+        _fasd_data="$_ret_exact"
+      elif [ "$_ret" ]; then
         _fasd_data="$_ret"
       else # no case matching
         _ret="$(printf %s\\n "$_fasd_data" | $_FASD_GREP -i "$bre")"
@@ -496,15 +540,42 @@ $(fasd --backend $each)"
       done)"
     fi
 
+    local prjroot=$(pwd)
+    while [ "$prjroot" != "/" ]; do
+        if [ -e "$prjroot/.root" ]; then
+            break
+        else
+            prjroot=$(dirname "$prjroot")
+        fi
+    done
+    if  [ "$prjroot" = "/" ] ; then
+        prjroot=""
+    fi
+    
+
+
     # query the database
     [ "$_fasd_data" ] && printf %s\\n "$_fasd_data" | \
-      $_FASD_AWK -v t="$(date +%s)" -F"|" '
+      $_FASD_AWK -v t="$(date +%s)" -v prjroot="$prjroot" -F"|" '
       function frecent(time) {
         dx = t-time
         if( dx < 3600 ) return 6
         if( dx < 86400 ) return 4
         if( dx < 604800 ) return 2
         return 1
+      }
+      function isPrefix(str, prefix) {
+          if ( prefix == "" ) {
+            return 0
+          }
+          return substr(str, 1, length(prefix)) == prefix
+      }
+      function default_v2(i,prev) {
+        if( isPrefix(i,prjroot) ) {
+            return prev + 100
+        } else {
+            return prev
+        }
       }
       {
         if(!paths[$1]) {
@@ -563,7 +634,7 @@ $(fasd --backend $each)"
     local fnd= last= _FASD_BACKENDS="$_FASD_BACKENDS" _fasd_data= comp= exec=
     while [ "$1" ]; do case $1 in
       --complete) [ "$2" = "--" ] && shift; set -- $2; local lst=1 r=r comp=1;;
-      --query|--add|--delete|-A|-D) fasd "$@"; return $?;;
+      --query|--add|--delete|-A|-D|--mark) fasd "$@"; return $?;;
       --version) [ -z "$comp" ] && echo "1.0.4" && return;;
       --) while [ "$2" ]; do shift; fnd="$fnd $1"; last="$1"; done;;
       -*) local o="${1#-}"; while [ "$o" ]; do case $o in
