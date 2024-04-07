@@ -79,6 +79,8 @@ fasd() {
           if [ -z "$_FASD_DATA" ]; then
             if [ -n "$XDG_CACHE_HOME" ]; then
               _FASD_DATA="$XDG_CACHE_HOME/fasd/data.txt"
+            elif [ -n "$PEM_CACHE_HOME" ]; then
+              _FASD_DATA="$PEM_CACHE_HOME/fasd/data.txt"
             else
               _FASD_DATA="$HOME/.cache/fasd/data.txt"
             fi
@@ -104,6 +106,7 @@ fasd() {
           [ -z "$_FASD_RECENTLY_USED_XBEL" ] && \
             _FASD_RECENTLY_USED_XBEL="$HOME/.local/share/recently-used.xbel"
           [ -z "$_FASD_NOCASE" ] && _FASD_NOCASE=0
+          [ -z "$_FASD_STOP" ] && _FASD_STOP=0
 
           if [ -z "$_FASD_AWK" ]; then
             # awk preferences
@@ -165,7 +168,9 @@ EOS
       zsh-hook) cat <<EOS
 # add zsh hook
 _fasd_preexec() {
-  { fasd --proc \$(fasd --sanitize "\$2") } >> "$_FASD_SINK" 2>&1
+  if [ ! "\$_FASD_STOP" = 1 ] ; then
+      { fasd --proc \$(fasd --sanitize "\$2") } >> "$_FASD_SINK" 2>&1
+  fi
 }
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec _fasd_preexec
@@ -176,8 +181,10 @@ EOS
       bash-hook) cat <<EOS
 _fasd_prompt_func() {
   local _exit_code="\$?"
-  eval "fasd --proc \$(fasd --sanitize \$(HISTTIMEFORMAT= history 1 | \\
-    sed "s/^[ ]*[0-9]*[ ]*//"))" >> "$_FASD_SINK" 2>&1
+  if [ ! "\$_FASD_STOP" = 1 ] ; then
+      eval "fasd --proc \$(fasd --sanitize \$(HISTTIMEFORMAT= history 1 | \\
+        sed "s/^[ ]*[0-9]*[ ]*//"))" >> "$_FASD_SINK" 2>&1
+  fi
   # preserve exit code
   return \$_exit_code
 }
