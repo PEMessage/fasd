@@ -27,26 +27,26 @@
 # TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-get_vcs() {
-    local begin_path=$1
-    cd "$begin_path"
-    while [ "$PWD" != "/" ]; do
-        if { [ -d .git ] || [ -d .hg ] ;} then
-            echo $PWD
-            return
-        fi
-        cd ..
-    done
-    echo "$begin_path"
-}
-
-ntharg() {
-    shift $1
-    printf '%s\n' "$1"
-}
 
 
 fasd() {
+    _FASD_get_vcs() {
+        local begin_path=$1
+        cd "$begin_path"
+        while [ "$PWD" != "/" ]; do
+            if { [ -d .git ] || [ -d .hg ] ;} then
+                echo $PWD
+                return
+            fi
+            cd ..
+        done
+        echo "$begin_path"
+    }
+
+    _FASD_ntharg() {
+        shift $1
+        printf '%s\n' "$1"
+    }
 
   # make zsh do word splitting inside this function
   [ "$ZSH_VERSION" ] && emulate sh && setopt localoptions
@@ -378,7 +378,7 @@ EOS
 
   --add|-A|--mark)
     local addtype="$1" 
-    local lastarg=`ntharg $# "$@"`
+    local lastarg=`_FASD_ntharg $# "$@"`
     shift # add entries
     # stop if we don't own $_FASD_DATA or $_FASD_RO is set
     [ -f "$_FASD_DATA" -a ! -O "$_FASD_DATA" ] || [ "$_FASD_RO" ] && return
@@ -396,7 +396,7 @@ EOS
     # add current pwd if the option is set
     local pwd="$PWD"
     [ $_FASD_RESOLVE_SYMLINKS = 1 ] && pwd="$(readlink -f "$pwd")"
-    [ $_FASD_ONLY_VCS = 1 ] && pwd="$(get_vcs "$pwd")"
+    [ $_FASD_ONLY_VCS = 1 ] && pwd="$(_FASD_get_vcs "$pwd")"
     [ "$_FASD_TRACK_PWD" = 1 -a "$PWD" != "$HOME" ] && paths="$paths|$pwd"
 
     [ -z "${paths##\|}" ] && return # stop if we have nothing to add
